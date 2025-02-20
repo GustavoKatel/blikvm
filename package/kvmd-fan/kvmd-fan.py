@@ -3,9 +3,11 @@
 
 import RPi.GPIO
 import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from socketserver import ThreadingMixIn, UnixStreamServer
+from http.server import BaseHTTPRequestHandler
+from socketserver import UnixStreamServer
 import os
+from pwd import getpwnam
+import threading
 
 #settings
 fan_gpio=12 # Fan GPIO pin number (default: 12)
@@ -30,9 +32,10 @@ cpu_temp = 0.0
 fan_speed = 0.0
 
 def running_status():
-	if running:
-		return "true"
-	return "false"
+	return "true"
+	# if running:
+	# 	return "true"
+	# return "false"
 
 class Handler(BaseHTTPRequestHandler):
 	def do_GET(self):
@@ -42,15 +45,15 @@ class Handler(BaseHTTPRequestHandler):
 
 		if self.path == '/':
 			content_type = "application/json"
-			content = f'{"ok": true, "result": {"version": "{VERSION}"}}\n'
+			content = f'{{"ok": true, "result": {{"version": "{VERSION}"}}}}\n'
 		elif self.path == '/state':
 			content_type = "application/json"
 			content = ( '{"ok": true, "result": {'
-										 f'"service": {"now_ts": 0.01},'
-										f' "temp": {"real": {cpu_temp:.2f}, "fixed": {cpu_temp:.2f}},'
-										f' "fan": {"speed": {fan_speed:.2f}, "pwm": 0, "ok": {running_status()}, "last_fail_ts": 0.01},'
-										 ' "hall": {"available": false, "rpm": 0}'
-										 f'}}\n' )
+					 f'"service": {{"now_ts": 0.01}},'
+					f' "temp": {{"real": {cpu_temp:.2f}, "fixed": {cpu_temp:.2f}}},'
+					f' "fan": {{"speed": {fan_speed:.2f}, "pwm": 0, "ok": {running_status()}, "last_fail_ts": -1}},'
+					 ' "hall": {"available": false, "rpm": 0}'
+					 '}}\n' )
 		else:
 			status = 404
 			content = "Not Found\n"
@@ -60,13 +63,20 @@ class Handler(BaseHTTPRequestHandler):
 		self.end_headers()
 		self.wfile.write(bytes(content, "utf-8"))
 
-class UnixSocketHttpServer(ThreadingMixIn, UnixStreamServer):
+class UnixSocketHttpServer(UnixStreamServer):
     def get_request(self):
         request, client_address = super(UnixSocketHttpServer, self).get_request()
         return (request, ["local", 0])
 
-server = UnixSocketHttpServer(SOCKET_PATH, Handler)
-server.serve_forever()
+def start_server():
+	server = UnixSocketHttpServer(SOCKET_PATH, Handler)
+	uid = getpwnam("kvmd").pw_uid
+	gid = getpwnam("kvmd").pw_gid
+	os.chown(SOCKET_PATH,uid,gid)
+	os.chmod(SOCKET_PATH,0o666)
+	server.serve_forever()
+
+threading.Thread(target=start_server).start()
 
 #running code
 try:
@@ -99,5 +109,4 @@ try:
 except KeyboardInterrupt:
 		pass
 pwm.stop()
-server.server_close()
 os.remove(SOCKET_PATH)
